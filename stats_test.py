@@ -113,8 +113,20 @@ def run():
                     net.append(f"{r.status} {rt} {host}{u.split('?')[0][len('https://' + host):][:90]}")
 
             page.on("response", on_resp)
-            page.on("requestfailed", lambda r: net.append(
-                f"FAILED {r.resource_type} {(r.url.split('/')[2] if '//' in r.url else r.url[:40])}"))
+            fails, errs = [], []
+
+            def on_fail(r):
+                u = r.url
+                host = u.split("/")[2] if "//" in u else u[:40]
+                path = u.split("?")[0]
+                last = path.rsplit("/", 1)[-1]
+                ext = last.rsplit(".", 1)[-1][:5] if "." in last else "-"
+                fails.append((r.failure or "?", host, ext, path[-75:]))
+                net.append(f"FAILED {r.resource_type} {host}")
+
+            page.on("requestfailed", on_fail)
+            page.on("pageerror", lambda e: errs.append(str(e)[:150]))
+            page.on("console", lambda m: errs.append(m.text[:150]) if m.type == "error" else None)
             try:
                 resp = page.goto(url, wait_until="domcontentloaded", timeout=60000)
                 row["http_status"] = resp.status if resp else None
@@ -131,8 +143,17 @@ def run():
                     row["widget"] = "NOT LOADED"
                 print("widget:", row["widget"])
                 print("network (count status type host):")
-                for line, cnt in Counter(net).most_common(25):
+                print("   sportradar requests:", sum("sportradar" in x for x in net))
+                for line, cnt in Counter(net).most_common(8):
                     print(f"   {cnt}x {line}")
+                print("failure reasons (count, error, host, file type):")
+                for (err, host, ext), cnt in Counter((f[0], f[1], f[2]) for f in fails).most_common(8):
+                    print(f"   {cnt}x {err} {host} .{ext}")
+                for f in [f for f in fails if f[2] == "js"][:3]:
+                    print("   failed js:", f[3])
+                print("script tags on page:", page.evaluate("document.querySelectorAll('script[src]').length"),
+                      "| sr widget nodes:", page.locator("[data-sr-widget]").count())
+                print("page errors:", errs[:5])
                 page.screenshot(path=str(OUT / f"{name}.png"), full_page=True)
                 body = page.inner_text("body")
                 (OUT / f"{name}_text.txt").write_text(body, encoding="utf-8")
