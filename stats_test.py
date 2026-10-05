@@ -66,26 +66,37 @@ def dismiss_consent(page):
             pass
 
 
-def open_stats(page):
-    """On this site the button is labelled 'Stats' (next to the 1X2 market)."""
-    loc = page.locator('text=/^\\s*Stats\\s*$/i')
+def open_stats(page, net):
+    """Exact button from the saved page: <button data-op="event-detail-market-stats-button">."""
+    loc = page.locator('button[data-op="event-detail-market-stats-button"]')
     n = loc.count()
-    print(f"  'Stats' elements found: {n}")
-    for i in range(min(n, 3)):
-        for force in (False, True):
+    print(f"  stats buttons found: {n} | dialogs before: {page.locator('.dialog-mask').count()}")
+    for i in range(min(n, 2)):
+        el = loc.nth(i)
+        try:
+            el.scroll_into_view_if_needed(timeout=3000)
+        except Exception:
+            print(f"   #{i} could not scroll into view")
+        for how in ("tap", "click", "dom"):
+            before = len(net)
             try:
-                el = loc.nth(i)
-                el.scroll_into_view_if_needed(timeout=3000)
-                el.click(timeout=4000, force=force)
-                print(f"  clicked Stats #{i} (force={force})")
-                try:
-                    page.wait_for_selector(".sr-bb", timeout=12000)
-                    return f"Stats #{i}"
-                except Exception:
-                    print("   no widget after 12s")
-                break
+                if how == "tap":
+                    el.tap(timeout=4000)
+                elif how == "click":
+                    el.click(timeout=4000)
+                else:
+                    el.evaluate("e => e.click()")
             except Exception as e:
-                print(f"   click #{i} force={force} failed:", str(e).split(chr(10))[0][:80])
+                print(f"   #{i} {how} failed:", str(e).split(chr(10))[0][:80])
+                continue
+            page.wait_for_timeout(1500)
+            print(f"   #{i} {how}: dialogs now={page.locator('.dialog-mask').count()}, "
+                  f"new requests={len(net) - before}")
+            try:
+                page.wait_for_selector(".sr-bb", timeout=10000)
+                return f"button #{i} via {how}"
+            except Exception:
+                print("      no widget after 10s")
     return None
 
 
@@ -133,7 +144,7 @@ def run():
                 print("HTTP", row["http_status"], "| final URL:", page.url[:90], "| title:", page.title()[:70])
                 page.wait_for_timeout(4000)
                 dismiss_consent(page)
-                row["clicked"] = open_stats(page)
+                row["clicked"] = open_stats(page, net)
                 print("opened stats via:", row["clicked"])
                 try:
                     page.wait_for_selector(".sr-last-matches__match", timeout=15000)
