@@ -54,12 +54,19 @@ def to_goals(wdl, raw):
 
 
 def open_stats(page):
-    for sel in ['li:has-text("Statistics")', 'text=/^\\s*Statistics\\s*$/i', 'text=/Statistics/i']:
-        try:
-            page.locator(sel).first.click(timeout=6000, force=True)
-            return sel
-        except Exception:
-            continue
+    """On this site the button is labelled 'Stats' (next to the 1X2 market)."""
+    for sel in ['text=/^\\s*Stats\\s*$/i', 'text=/^\\s*Statistics\\s*$/i', 'li:has-text("Statistics")']:
+        loc = page.locator(sel)
+        n = loc.count()
+        print(f"  selector {sel!r}: {n} found")
+        for i in range(min(n, 3)):
+            try:
+                loc.nth(i).click(timeout=5000, force=True)
+                page.wait_for_timeout(5000)
+                if page.locator(".sr-bb").count():
+                    return f"{sel} #{i}"
+            except Exception as e:
+                print("   click failed:", str(e)[:80])
     return None
 
 
@@ -83,7 +90,7 @@ def run():
                 row["clicked"] = open_stats(page)
                 print("clicked Statistics via:", row["clicked"])
                 try:
-                    page.wait_for_selector(".sr-last-matches__match", timeout=40000)
+                    page.wait_for_selector(".sr-last-matches__match", timeout=30000)
                     page.wait_for_timeout(2000)
                     row["widget"] = "loaded"
                 except Exception:
