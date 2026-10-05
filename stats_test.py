@@ -5,6 +5,7 @@ Writes out/ (screenshots, raw widget text, results.json) and a summary
 that shows on the GitHub run page.
 """
 import json, os, re, time
+from collections import Counter
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 
@@ -53,20 +54,38 @@ def to_goals(wdl, raw):
     return None, None, "unknown result"
 
 
+def dismiss_consent(page):
+    for label in ["Accept all", "Accept", "I agree", "Agree", "Allow all", "Got it", "OK"]:
+        try:
+            btn = page.get_by_role("button", name=re.compile(rf"^\s*{label}\s*$", re.I)).first
+            if btn.count():
+                btn.click(timeout=2000)
+                print("  dismissed banner via:", label)
+                return
+        except Exception:
+            pass
+
+
 def open_stats(page):
     """On this site the button is labelled 'Stats' (next to the 1X2 market)."""
-    for sel in ['text=/^\\s*Stats\\s*$/i', 'text=/^\\s*Statistics\\s*$/i', 'li:has-text("Statistics")']:
-        loc = page.locator(sel)
-        n = loc.count()
-        print(f"  selector {sel!r}: {n} found")
-        for i in range(min(n, 3)):
+    loc = page.locator('text=/^\\s*Stats\\s*$/i')
+    n = loc.count()
+    print(f"  'Stats' elements found: {n}")
+    for i in range(min(n, 3)):
+        for force in (False, True):
             try:
-                loc.nth(i).click(timeout=5000, force=True)
-                page.wait_for_timeout(5000)
-                if page.locator(".sr-bb").count():
-                    return f"{sel} #{i}"
+                el = loc.nth(i)
+                el.scroll_into_view_if_needed(timeout=3000)
+                el.click(timeout=4000, force=force)
+                print(f"  clicked Stats #{i} (force={force})")
+                try:
+                    page.wait_for_selector(".sr-bb", timeout=12000)
+                    return f"Stats #{i}"
+                except Exception:
+                    print("   no widget after 12s")
+                break
             except Exception as e:
-                print("   click failed:", str(e)[:80])
+                print(f"   click #{i} force={force} failed:", str(e).split(chr(10))[0][:80])
     return None
 
 
@@ -82,20 +101,38 @@ def run():
             row = {"match": f"{home} vs {away}", "url": url}
             print(f"\n=== {home} vs {away}")
             page = ctx.new_page()
+            net = []
+
+            def on_resp(r):
+                u = r.url
+                host = u.split("/")[2] if "//" in u else ""
+                rt = r.request.resource_type
+                if "sportradar" in host:
+                    net.append(f"{r.status} {rt} {host}")
+                elif "football.com" in host and rt in ("xhr", "fetch"):
+                    net.append(f"{r.status} {rt} {host}{u.split('?')[0][len('https://' + host):][:90]}")
+
+            page.on("response", on_resp)
+            page.on("requestfailed", lambda r: net.append(
+                f"FAILED {r.resource_type} {(r.url.split('/')[2] if '//' in r.url else r.url[:40])}"))
             try:
                 resp = page.goto(url, wait_until="domcontentloaded", timeout=60000)
                 row["http_status"] = resp.status if resp else None
                 print("HTTP", row["http_status"], "| final URL:", page.url[:90], "| title:", page.title()[:70])
                 page.wait_for_timeout(4000)
+                dismiss_consent(page)
                 row["clicked"] = open_stats(page)
-                print("clicked Statistics via:", row["clicked"])
+                print("opened stats via:", row["clicked"])
                 try:
-                    page.wait_for_selector(".sr-last-matches__match", timeout=30000)
+                    page.wait_for_selector(".sr-last-matches__match", timeout=15000)
                     page.wait_for_timeout(2000)
                     row["widget"] = "loaded"
                 except Exception:
                     row["widget"] = "NOT LOADED"
                 print("widget:", row["widget"])
+                print("network (count status type host):")
+                for line, cnt in Counter(net).most_common(25):
+                    print(f"   {cnt}x {line}")
                 page.screenshot(path=str(OUT / f"{name}.png"), full_page=True)
                 body = page.inner_text("body")
                 (OUT / f"{name}_text.txt").write_text(body, encoding="utf-8")
