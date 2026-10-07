@@ -1,4 +1,4 @@
-(function(){
+javascript:(function(){
 try{alert('GG2 loaded');
 if(window.__gg2){window.__gg2();return;}
 var KEY='gg2_bm_v1';
